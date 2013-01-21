@@ -57,6 +57,7 @@ class ProxyCrawl():
     def get_proxy(self):
         self.http_proxys = self.crawl_ipcn()
         self.http_proxys = dict(self.http_proxys, **self.crawl_proxymore())
+        return self.http_proxys
 
 
 class Proxy():
