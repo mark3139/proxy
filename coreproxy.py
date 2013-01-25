@@ -6,6 +6,7 @@ import re
 import json
 import string
 import time
+import socket
 
 from lxml import etree
 
@@ -22,8 +23,11 @@ class ProxyCrawl():
     def crawl_ipcn(self):
         '''Crawl ipcn find proxy'''
         url = 'http://proxy.ipcn.org/proxylist.html'
-        #self.tree = etree.parse(self.opener.open(url), self.parser)
-        self.tree = etree.parse('proxylist.html', self.parser)
+        try:
+            self.tree = etree.parse(self.opener.open(url, timeout=120), self.parser)
+        except socket.timeout:
+            return {}
+        #self.tree = etree.parse('proxylist.html', self.parser)
         content = self.tree.find('/body/table[@width="100%"]//pre').text
         proxys = re.findall(r'\d+\.\d+\.\d+\.\d+:\d+', content)
         proxys = [proxy.split(':') for proxy in proxys]
@@ -33,11 +37,9 @@ class ProxyCrawl():
     def crawl_proxymore(self):
         '''Crawl proxymore find proxy'''
         url = 'http://www.proxymore.net/proxy_area-CN.html'
-        #web = self.opener.open(url)
-        #self.tree = etree.parse(web, self.parser)
-        web = file('proxy_area-CN.html')
-        self.tree = etree.parse('proxy_area-CN.html', self.parser)
-        port = re.search(r'\(port,\s({.*})', web.read())
+        web = self.opener.open(url, timeout=30).read()
+        self.tree = etree.fromstring(web, self.parser)
+        port = re.search(r'port,\s({.*})', web)
         if port:
             port = re.sub(r'(\w)', "\"\g<1>\"", port.group(1))
             port_map = json.loads(port)
@@ -55,29 +57,56 @@ class ProxyCrawl():
         return http_proxys
 
     def get_proxy(self):
-        self.http_proxys = self.crawl_ipcn()
+        #self.http_proxys = self.crawl_ipcn()
+        self.http_proxys ={}
         self.http_proxys = dict(self.http_proxys, **self.crawl_proxymore())
-        return self.http_proxys
+        http_proxys_list = []
+        for ip, port in self.http_proxys.iteritems():
+            ipaddr = '%s:%s' % (ip, port)
+            http_proxys_list.append(ipaddr)
+        return http_proxys_list
 
 
-class Proxy():
-    def __init__(self, proxys):
-        self.test_url = 'http://www.baidu.com'
+class ProxyValidate():
+    def __init__(self, test_url='http://www.google.com', timeout=10):
+        self.test_url = test_url
+        self.timeout = timeout
 
     def validate(self, proxy):
+        '''Validate proxy
+           Return 1:OK, 2:TIMEOUT,3:FAILED
+        '''
         proxy_handler = urllib2.ProxyHandler({'http': proxy})
         opener = urllib2.build_opener(proxy_handler)
         befor = time.time()
         try:
-            o = opener.open(self.test_url)
+            o = opener.open(self.test_url, timeout=self.timeout)
             if o:
                 after = time.time()
-                return (1, int((after - befor) * 1000))
+                elapse = int((after - befor) * 1000)  # ms
+                return (1, elapse) if elapse < self.timeout * 1000 else (2, elapse)
             else:
-                return (0, 0)
+                return (3, 0)
         except Exception:
-            return (0, 0)
+            return (3, 0)
+
+    def validates(self, proxys):
+        '''Validate proxys return (proxy, proxy_status, connect_time)'''
+        for proxy in proxys:
+            st, time = self.validate(proxy)
+            if st == 1:
+                yield (proxy, st, time)
+            elif st == 2:
+                yield (proxy, st, time)
+            else:
+                continue
+
 
 if __name__ == '__main__':
-    p = Proxy('')
-    print p.validate('119.254.90.18:8080')
+    proxy = ProxyCrawl()
+    proxys = proxy.get_proxy()
+    v = ProxyValidate()
+    tcnt = len(proxys)
+    print tcnt
+    for (a, b, c) in v.validates(proxys):
+        print a, b, c
